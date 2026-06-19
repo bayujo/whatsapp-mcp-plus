@@ -622,18 +622,20 @@ def get_direct_chat_by_contact(sender_phone_number: str) -> Optional[Chat]:
         if 'conn' in locals():
             conn.close()
 
-def send_message(recipient: str, message: str) -> Tuple[bool, str]:
+def send_message(recipient: str, message: str, quoted_message_id: str = "") -> Tuple[bool, str]:
     try:
         # Validate input
         if not recipient:
             return False, "Recipient must be provided"
-        
+
         url = f"{WHATSAPP_API_BASE_URL}/send"
         payload = {
             "recipient": recipient,
             "message": message,
         }
-        
+        if quoted_message_id:
+            payload["quoted_message_id"] = quoted_message_id
+
         response = requests.post(url, json=payload)
         
         # Check if the request was successful
@@ -650,24 +652,26 @@ def send_message(recipient: str, message: str) -> Tuple[bool, str]:
     except Exception as e:
         return False, f"Unexpected error: {str(e)}"
 
-def send_file(recipient: str, media_path: str) -> Tuple[bool, str]:
+def send_file(recipient: str, media_path: str, caption: str = "") -> Tuple[bool, str]:
     try:
         # Validate input
         if not recipient:
             return False, "Recipient must be provided"
-        
+
         if not media_path:
             return False, "Media path must be provided"
-        
+
         if not os.path.isfile(media_path):
             return False, f"Media file not found: {media_path}"
-        
+
         url = f"{WHATSAPP_API_BASE_URL}/send"
         payload = {
             "recipient": recipient,
             "media_path": media_path
         }
-        
+        if caption:
+            payload["message"] = caption
+
         response = requests.post(url, json=payload)
         
         # Check if the request was successful
@@ -765,3 +769,53 @@ def download_media(message_id: str, chat_jid: str) -> Optional[str]:
     except Exception as e:
         print(f"Unexpected error: {str(e)}")
         return None
+
+def _post(endpoint: str, payload: dict) -> Tuple[bool, str]:
+    """POST a JSON payload to a bridge endpoint and return (success, message)."""
+    try:
+        response = requests.post(f"{WHATSAPP_API_BASE_URL}/{endpoint}", json=payload)
+        if response.status_code == 200:
+            result = response.json()
+            return result.get("success", False), result.get("message", "Unknown response")
+        return False, f"Error: HTTP {response.status_code} - {response.text}"
+    except requests.RequestException as e:
+        return False, f"Request error: {str(e)}"
+    except json.JSONDecodeError:
+        return False, f"Error parsing response: {response.text}"
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
+
+def react_to_message(chat_jid: str, message_id: str, emoji: str) -> Tuple[bool, str]:
+    return _post("react", {"chat_jid": chat_jid, "message_id": message_id, "emoji": emoji})
+
+def mark_as_read(chat_jid: str, message_ids: List[str]) -> Tuple[bool, str]:
+    return _post("markread", {"chat_jid": chat_jid, "message_ids": message_ids})
+
+def edit_message(chat_jid: str, message_id: str, new_text: str) -> Tuple[bool, str]:
+    return _post("edit", {"chat_jid": chat_jid, "message_id": message_id, "new_text": new_text})
+
+def delete_message(chat_jid: str, message_id: str) -> Tuple[bool, str]:
+    return _post("delete", {"chat_jid": chat_jid, "message_id": message_id})
+
+def create_group(name: str, participants: List[str]) -> Tuple[bool, str]:
+    try:
+        response = requests.post(
+            f"{WHATSAPP_API_BASE_URL}/group/create",
+            json={"name": name, "participants": participants},
+        )
+        if response.status_code == 200:
+            result = response.json()
+            msg = result.get("message", "Unknown response")
+            jid = result.get("data", "")
+            if jid:
+                msg = f"{msg} (JID: {jid})"
+            return result.get("success", False), msg
+        return False, f"Error: HTTP {response.status_code} - {response.text}"
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
+
+def leave_group(group_jid: str) -> Tuple[bool, str]:
+    return _post("group/leave", {"group_jid": group_jid})
+
+def update_group_participants(group_jid: str, action: str, participants: List[str]) -> Tuple[bool, str]:
+    return _post("group/participants", {"group_jid": group_jid, "action": action, "participants": participants})

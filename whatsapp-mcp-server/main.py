@@ -12,7 +12,14 @@ from whatsapp import (
     send_message as whatsapp_send_message,
     send_file as whatsapp_send_file,
     send_audio_message as whatsapp_audio_voice_message,
-    download_media as whatsapp_download_media
+    download_media as whatsapp_download_media,
+    react_to_message as whatsapp_react_to_message,
+    mark_as_read as whatsapp_mark_as_read,
+    edit_message as whatsapp_edit_message,
+    delete_message as whatsapp_delete_message,
+    create_group as whatsapp_create_group,
+    leave_group as whatsapp_leave_group,
+    update_group_participants as whatsapp_update_group_participants,
 )
 
 # Initialize FastMCP server
@@ -157,7 +164,8 @@ def get_message_context(
 @mcp.tool()
 def send_message(
     recipient: str,
-    message: str
+    message: str,
+    quoted_message_id: str = ""
 ) -> Dict[str, Any]:
     """Send a WhatsApp message to a person or group. For group chats use the JID.
 
@@ -165,7 +173,8 @@ def send_message(
         recipient: The recipient - either a phone number with country code but no + or other symbols,
                  or a JID (e.g., "123456789@s.whatsapp.net" or a group JID like "123456789@g.us")
         message: The message text to send
-    
+        quoted_message_id: Optional ID of a message to reply to / quote. Leave empty for a normal message.
+
     Returns:
         A dictionary containing success status and a status message
     """
@@ -175,29 +184,30 @@ def send_message(
             "success": False,
             "message": "Recipient must be provided"
         }
-    
+
     # Call the whatsapp_send_message function with the unified recipient parameter
-    success, status_message = whatsapp_send_message(recipient, message)
+    success, status_message = whatsapp_send_message(recipient, message, quoted_message_id)
     return {
         "success": success,
         "message": status_message
     }
 
 @mcp.tool()
-def send_file(recipient: str, media_path: str) -> Dict[str, Any]:
+def send_file(recipient: str, media_path: str, caption: str = "") -> Dict[str, Any]:
     """Send a file such as a picture, raw audio, video or document via WhatsApp to the specified recipient. For group messages use the JID.
-    
+
     Args:
         recipient: The recipient - either a phone number with country code but no + or other symbols,
                  or a JID (e.g., "123456789@s.whatsapp.net" or a group JID like "123456789@g.us")
         media_path: The absolute path to the media file to send (image, video, document)
-    
+        caption: Optional text caption to send together with the file (shown under images/videos/documents)
+
     Returns:
         A dictionary containing success status and a status message
     """
-    
+
     # Call the whatsapp_send_file function
-    success, status_message = whatsapp_send_file(recipient, media_path)
+    success, status_message = whatsapp_send_file(recipient, media_path, caption)
     return {
         "success": success,
         "message": status_message
@@ -245,6 +255,85 @@ def download_media(message_id: str, chat_jid: str) -> Dict[str, Any]:
             "success": False,
             "message": "Failed to download media"
         }
+
+@mcp.tool()
+def react_to_message(chat_jid: str, message_id: str, emoji: str) -> Dict[str, Any]:
+    """React to a WhatsApp message with an emoji. Pass an empty emoji to remove your reaction.
+
+    Args:
+        chat_jid: The JID of the chat containing the message
+        message_id: The ID of the message to react to
+        emoji: The emoji to react with (e.g. "👍"), or "" to remove a previous reaction
+    """
+    success, status_message = whatsapp_react_to_message(chat_jid, message_id, emoji)
+    return {"success": success, "message": status_message}
+
+@mcp.tool()
+def mark_as_read(chat_jid: str, message_ids: List[str]) -> Dict[str, Any]:
+    """Mark one or more WhatsApp messages as read (sends read receipts).
+
+    Args:
+        chat_jid: The JID of the chat containing the messages
+        message_ids: A list of message IDs to mark as read
+    """
+    success, status_message = whatsapp_mark_as_read(chat_jid, message_ids)
+    return {"success": success, "message": status_message}
+
+@mcp.tool()
+def edit_message(chat_jid: str, message_id: str, new_text: str) -> Dict[str, Any]:
+    """Edit a text message you previously sent. WhatsApp only allows editing within ~15 minutes of sending.
+
+    Args:
+        chat_jid: The JID of the chat containing the message
+        message_id: The ID of your message to edit
+        new_text: The new text content
+    """
+    success, status_message = whatsapp_edit_message(chat_jid, message_id, new_text)
+    return {"success": success, "message": status_message}
+
+@mcp.tool()
+def delete_message(chat_jid: str, message_id: str) -> Dict[str, Any]:
+    """Delete (revoke) a message for everyone. Works on your own messages, or others' messages if you are a group admin.
+
+    Args:
+        chat_jid: The JID of the chat containing the message
+        message_id: The ID of the message to delete
+    """
+    success, status_message = whatsapp_delete_message(chat_jid, message_id)
+    return {"success": success, "message": status_message}
+
+@mcp.tool()
+def create_group(name: str, participants: List[str]) -> Dict[str, Any]:
+    """Create a new WhatsApp group.
+
+    Args:
+        name: The group name (max 25 characters)
+        participants: List of phone numbers (country code, no +) or JIDs to add. You are added automatically.
+    """
+    success, status_message = whatsapp_create_group(name, participants)
+    return {"success": success, "message": status_message}
+
+@mcp.tool()
+def leave_group(group_jid: str) -> Dict[str, Any]:
+    """Leave a WhatsApp group.
+
+    Args:
+        group_jid: The JID of the group to leave (e.g. "123456789@g.us")
+    """
+    success, status_message = whatsapp_leave_group(group_jid)
+    return {"success": success, "message": status_message}
+
+@mcp.tool()
+def update_group_participants(group_jid: str, action: str, participants: List[str]) -> Dict[str, Any]:
+    """Add, remove, promote or demote participants in a WhatsApp group (requires admin rights).
+
+    Args:
+        group_jid: The JID of the group (e.g. "123456789@g.us")
+        action: One of "add", "remove", "promote", "demote"
+        participants: List of phone numbers (country code, no +) or JIDs to act on
+    """
+    success, status_message = whatsapp_update_group_participants(group_jid, action, participants)
+    return {"success": success, "message": status_message}
 
 if __name__ == "__main__":
     # Initialize and run the server
