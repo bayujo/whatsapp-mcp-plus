@@ -1,6 +1,8 @@
+import functools
 from typing import List, Dict, Any, Optional
 from mcp.server.fastmcp import FastMCP
 from whatsapp import (
+    ensure_bridge,
     search_contacts as whatsapp_search_contacts,
     list_messages as whatsapp_list_messages,
     list_chats as whatsapp_list_chats,
@@ -25,7 +27,17 @@ from whatsapp import (
 # Initialize FastMCP server
 mcp = FastMCP("whatsapp")
 
-@mcp.tool()
+
+def tool(fn):
+    """Register fn as an MCP tool that starts the bridge first if it isn't running."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        ensure_bridge()
+        return fn(*args, **kwargs)
+    return mcp.tool()(wrapper)
+
+
+@tool
 def search_contacts(query: str) -> List[Dict[str, Any]]:
     """Search WhatsApp contacts by name or phone number.
     
@@ -35,7 +47,7 @@ def search_contacts(query: str) -> List[Dict[str, Any]]:
     contacts = whatsapp_search_contacts(query)
     return contacts
 
-@mcp.tool()
+@tool
 def list_messages(
     after: Optional[str] = None,
     before: Optional[str] = None,
@@ -76,7 +88,7 @@ def list_messages(
     )
     return messages
 
-@mcp.tool()
+@tool
 def list_chats(
     query: Optional[str] = None,
     limit: int = 20,
@@ -102,7 +114,7 @@ def list_chats(
     )
     return chats
 
-@mcp.tool()
+@tool
 def get_chat(chat_jid: str, include_last_message: bool = True) -> Dict[str, Any]:
     """Get WhatsApp chat metadata by JID.
     
@@ -113,7 +125,7 @@ def get_chat(chat_jid: str, include_last_message: bool = True) -> Dict[str, Any]
     chat = whatsapp_get_chat(chat_jid, include_last_message)
     return chat
 
-@mcp.tool()
+@tool
 def get_direct_chat_by_contact(sender_phone_number: str) -> Dict[str, Any]:
     """Get WhatsApp chat metadata by sender phone number.
     
@@ -123,7 +135,7 @@ def get_direct_chat_by_contact(sender_phone_number: str) -> Dict[str, Any]:
     chat = whatsapp_get_direct_chat_by_contact(sender_phone_number)
     return chat
 
-@mcp.tool()
+@tool
 def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> List[Dict[str, Any]]:
     """Get all WhatsApp chats involving the contact.
     
@@ -135,7 +147,7 @@ def get_contact_chats(jid: str, limit: int = 20, page: int = 0) -> List[Dict[str
     chats = whatsapp_get_contact_chats(jid, limit, page)
     return chats
 
-@mcp.tool()
+@tool
 def get_last_interaction(jid: str) -> str:
     """Get most recent WhatsApp message involving the contact.
     
@@ -145,7 +157,7 @@ def get_last_interaction(jid: str) -> str:
     message = whatsapp_get_last_interaction(jid)
     return message
 
-@mcp.tool()
+@tool
 def get_message_context(
     message_id: str,
     before: int = 5,
@@ -161,7 +173,7 @@ def get_message_context(
     context = whatsapp_get_message_context(message_id, before, after)
     return context
 
-@mcp.tool()
+@tool
 def send_message(
     recipient: str,
     message: str,
@@ -192,7 +204,7 @@ def send_message(
         "message": status_message
     }
 
-@mcp.tool()
+@tool
 def send_file(recipient: str, media_path: str, caption: str = "") -> Dict[str, Any]:
     """Send a file such as a picture, raw audio, video or document via WhatsApp to the specified recipient. For group messages use the JID.
 
@@ -213,7 +225,7 @@ def send_file(recipient: str, media_path: str, caption: str = "") -> Dict[str, A
         "message": status_message
     }
 
-@mcp.tool()
+@tool
 def send_audio_message(recipient: str, media_path: str) -> Dict[str, Any]:
     """Send any audio file as a WhatsApp audio message to the specified recipient. For group messages use the JID. If it errors due to ffmpeg not being installed, use send_file instead.
     
@@ -231,7 +243,7 @@ def send_audio_message(recipient: str, media_path: str) -> Dict[str, Any]:
         "message": status_message
     }
 
-@mcp.tool()
+@tool
 def download_media(message_id: str, chat_jid: str) -> Dict[str, Any]:
     """Download media from a WhatsApp message and get the local file path.
     
@@ -256,7 +268,7 @@ def download_media(message_id: str, chat_jid: str) -> Dict[str, Any]:
             "message": "Failed to download media"
         }
 
-@mcp.tool()
+@tool
 def react_to_message(chat_jid: str, message_id: str, emoji: str) -> Dict[str, Any]:
     """React to a WhatsApp message with an emoji. Pass an empty emoji to remove your reaction.
 
@@ -268,7 +280,7 @@ def react_to_message(chat_jid: str, message_id: str, emoji: str) -> Dict[str, An
     success, status_message = whatsapp_react_to_message(chat_jid, message_id, emoji)
     return {"success": success, "message": status_message}
 
-@mcp.tool()
+@tool
 def mark_as_read(chat_jid: str, message_ids: List[str]) -> Dict[str, Any]:
     """Mark one or more WhatsApp messages as read (sends read receipts).
 
@@ -279,7 +291,7 @@ def mark_as_read(chat_jid: str, message_ids: List[str]) -> Dict[str, Any]:
     success, status_message = whatsapp_mark_as_read(chat_jid, message_ids)
     return {"success": success, "message": status_message}
 
-@mcp.tool()
+@tool
 def edit_message(chat_jid: str, message_id: str, new_text: str) -> Dict[str, Any]:
     """Edit a text message you previously sent. WhatsApp only allows editing within ~15 minutes of sending.
 
@@ -291,7 +303,7 @@ def edit_message(chat_jid: str, message_id: str, new_text: str) -> Dict[str, Any
     success, status_message = whatsapp_edit_message(chat_jid, message_id, new_text)
     return {"success": success, "message": status_message}
 
-@mcp.tool()
+@tool
 def delete_message(chat_jid: str, message_id: str) -> Dict[str, Any]:
     """Delete (revoke) a message for everyone. Works on your own messages, or others' messages if you are a group admin.
 
@@ -302,7 +314,7 @@ def delete_message(chat_jid: str, message_id: str) -> Dict[str, Any]:
     success, status_message = whatsapp_delete_message(chat_jid, message_id)
     return {"success": success, "message": status_message}
 
-@mcp.tool()
+@tool
 def create_group(name: str, participants: List[str]) -> Dict[str, Any]:
     """Create a new WhatsApp group.
 
@@ -313,7 +325,7 @@ def create_group(name: str, participants: List[str]) -> Dict[str, Any]:
     success, status_message = whatsapp_create_group(name, participants)
     return {"success": success, "message": status_message}
 
-@mcp.tool()
+@tool
 def leave_group(group_jid: str) -> Dict[str, Any]:
     """Leave a WhatsApp group.
 
@@ -323,7 +335,7 @@ def leave_group(group_jid: str) -> Dict[str, Any]:
     success, status_message = whatsapp_leave_group(group_jid)
     return {"success": success, "message": status_message}
 
-@mcp.tool()
+@tool
 def update_group_participants(group_jid: str, action: str, participants: List[str]) -> Dict[str, Any]:
     """Add, remove, promote or demote participants in a WhatsApp group (requires admin rights).
 

@@ -157,16 +157,16 @@ mcpServers:
    cd whatsapp-mcp-plus
    ```
 
-2. **Run the WhatsApp bridge**
+2. **Link the WhatsApp bridge** (once)
 
    ```bash
    cd whatsapp-bridge
-   go run main.go
+   go build -o whatsapp-bridge . && ./whatsapp-bridge
    ```
 
-   The first time, scan the QR code with your WhatsApp mobile app (Settings → Linked Devices). After ~20 days you may need to re-authenticate.
+   Scan the QR code with your WhatsApp mobile app (Settings → Linked Devices).
 
-   Keep this process running — it maintains the WhatsApp connection and the local message store.
+   After that, on macOS and Linux the MCP server starts the bridge in the background on the first tool call (log in `whatsapp-bridge/bridge.log`) and waits until messages received while it was off are stored. It keeps running until you stop it with `pkill -x whatsapp-bridge`. WhatsApp logs out a linked device that stays offline for a long time; if a tool reports the bridge is logged out, run the command above again and scan a new code. On Windows, keep the bridge running by hand.
 
 3. **Connect your MCP client** using the relevant section under [Compatible clients](#compatible-clients) above.
 

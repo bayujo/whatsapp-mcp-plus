@@ -3,12 +3,61 @@ from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 import os.path
+import socket
+import subprocess
+import time
 import requests
 import json
 import audio
 
-MESSAGES_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'whatsapp-bridge', 'store', 'messages.db')
+BRIDGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'whatsapp-bridge')
+MESSAGES_DB_PATH = os.path.join(BRIDGE_DIR, 'store', 'messages.db')
 WHATSAPP_API_BASE_URL = "http://localhost:8080/api"
+
+
+def _bridge_listening() -> bool:
+    try:
+        socket.create_connection(("localhost", 8080), timeout=1).close()
+        return True
+    except OSError:
+        return False
+
+
+def ensure_bridge(timeout: float = 45) -> None:
+    """Start the Go bridge if it isn't running, and wait until it serves the API.
+
+    The bridge opens the API only after it is logged in and WhatsApp has
+    delivered the messages queued while it was offline, so reads after this
+    return see current data. It keeps running until `pkill -x whatsapp-bridge`.
+    """
+    # ponytail: macOS/Linux only (fcntl, pgrep); on Windows run the bridge by hand as before
+    if os.name == 'nt' or _bridge_listening():
+        return
+    import fcntl
+    with open(os.path.join(BRIDGE_DIR, 'store', 'start.lock'), 'w') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # one MCP server starts it, the others wait
+        if _bridge_listening():
+            return
+        proc = None
+        if subprocess.run(['pgrep', '-x', 'whatsapp-bridge'], capture_output=True).returncode != 0:
+            build = subprocess.run(['go', 'build', '-o', 'whatsapp-bridge', '.'], cwd=BRIDGE_DIR, capture_output=True, text=True)
+            if build.returncode != 0:
+                raise RuntimeError(f"WhatsApp bridge build failed:\n{build.stderr[-2000:]}")
+            with open(os.path.join(BRIDGE_DIR, 'bridge.log'), 'a') as log:
+                proc = subprocess.Popen(['./whatsapp-bridge', '--no-qr'], cwd=BRIDGE_DIR, stdin=subprocess.DEVNULL,
+                                        stdout=log, stderr=log, start_new_session=True)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline and not (proc and proc.poll() is not None):
+            if _bridge_listening():
+                return
+            time.sleep(0.5)
+        if proc and proc.poll() is None:
+            proc.terminate()
+    with open(os.path.join(BRIDGE_DIR, 'bridge.log'), errors='replace') as log:
+        tail = [line.rstrip() for line in log.readlines()[-40:] if not any(c in line for c in '█▀▄')][-8:]
+    raise RuntimeError("WhatsApp bridge did not come up. If it is logged out, re-link in a visible terminal: "
+                       f"cd {os.path.abspath(BRIDGE_DIR)} && go build -o whatsapp-bridge . && ./whatsapp-bridge\n"
+                       "Last log lines:\n" + "\n".join(tail))
 
 @dataclass
 class Message:

@@ -24,6 +24,7 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	waProto "go.mau.fi/whatsmeow/binary/proto"
+	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
@@ -1183,6 +1184,17 @@ func main() {
 	logger := waLog.Stdout("Client", "INFO", true)
 	logger.Infof("Starting WhatsApp client...")
 
+	// Started by the MCP server in the background: nobody can see a QR code there.
+	noQR := len(os.Args) > 1 && os.Args[1] == "--no-qr"
+
+	// Report the current WhatsApp Web version instead of the one compiled into
+	// whatsmeow, so WhatsApp raising its minimum version doesn't cause a 405.
+	if ver, err := whatsmeow.GetLatestVersion(context.Background(), &http.Client{Timeout: 10 * time.Second}); err != nil {
+		logger.Warnf("Using built-in WhatsApp version, latest version lookup failed: %v", err)
+	} else {
+		store.SetWAVersion(*ver)
+	}
+
 	// Create database connection for storing session data
 	dbLog := waLog.Stdout("Database", "INFO", true)
 
@@ -1226,6 +1238,9 @@ func main() {
 	}
 	defer messageStore.Close()
 
+	// Signalled once WhatsApp has delivered the messages queued while offline
+	offlineSynced := make(chan struct{}, 1)
+
 	// Setup event handling for messages and history sync
 	client.AddEventHandler(func(evt interface{}) {
 		switch v := evt.(type) {
@@ -1240,6 +1255,12 @@ func main() {
 		case *events.Connected:
 			logger.Infof("Connected to WhatsApp")
 
+		case *events.OfflineSyncCompleted:
+			select {
+			case offlineSynced <- struct{}{}:
+			default:
+			}
+
 		case *events.LoggedOut:
 			logger.Warnf("Device logged out, please scan QR code to log in again")
 		}
@@ -1250,6 +1271,10 @@ func main() {
 
 	// Connect to WhatsApp
 	if client.Store.ID == nil {
+		if noQR {
+			logger.Errorf("Not logged in. Run the bridge in a terminal to scan a QR code")
+			os.Exit(1)
+		}
 		// No ID stored, this is a new client, need to pair with phone
 		qrChan, _ := client.GetQRChannel(context.Background())
 		err = client.Connect()
@@ -1293,6 +1318,20 @@ func main() {
 	if !client.IsConnected() {
 		logger.Errorf("Failed to establish stable connection")
 		return
+	}
+
+	// Serve the API only once queued messages are stored, so a read right
+	// after an on-demand start sees current data.
+	select {
+	case <-offlineSynced:
+	case <-time.After(15 * time.Second):
+		logger.Warnf("Offline sync not reported within 15s, serving anyway")
+	}
+
+	// A revoked session (401) deletes the stored device; the next start shows a QR
+	if !client.IsLoggedIn() {
+		logger.Errorf("Logged out by WhatsApp. Run the bridge in a terminal to scan a QR code")
+		os.Exit(1)
 	}
 
 	fmt.Println("\n✓ Connected to WhatsApp! Type 'help' for commands.")
