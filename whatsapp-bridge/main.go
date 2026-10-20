@@ -1379,10 +1379,14 @@ func GetChatName(client *whatsmeow.Client, messageStore *MessageStore, jid types
 		// This is an individual contact
 		logger.Infof("Getting name for contact: %s", chatJID)
 
-		// Just use contact info (full name)
+		// Use contact info: full name first, then push name. WhatsApp @lid
+		// contacts usually have only a push name (no full name), so without
+		// this fallback they'd resolve to the raw numeric ID.
 		contact, err := client.Store.Contacts.GetContact(context.Background(), jid)
 		if err == nil && contact.FullName != "" {
 			name = contact.FullName
+		} else if err == nil && contact.PushName != "" {
+			name = contact.PushName
 		} else if sender != "" {
 			// Fallback to sender
 			name = sender
