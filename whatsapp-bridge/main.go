@@ -186,7 +186,16 @@ func extractTextContent(msg *waProto.Message) string {
 		return extendedText.GetText()
 	}
 
-	// For now, we're ignoring non-text messages
+	// Media captions are the text the sender typed with the file
+	if img := msg.GetImageMessage(); img != nil {
+		return img.GetCaption()
+	} else if vid := msg.GetVideoMessage(); vid != nil {
+		return vid.GetCaption()
+	} else if doc := msg.GetDocumentMessage(); doc != nil {
+		return doc.GetCaption()
+	} else if dwc := msg.GetDocumentWithCaptionMessage(); dwc != nil {
+		return extractTextContent(dwc.GetMessage())
+	}
 	return ""
 }
 
@@ -507,6 +516,11 @@ func extractMediaInfo(msg *waProto.Message) (mediaType string, filename string, 
 		}
 		return "document", filename,
 			doc.GetURL(), doc.GetMediaKey(), doc.GetFileSHA256(), doc.GetFileEncSHA256(), doc.GetFileLength()
+	}
+
+	// A document sent with a caption arrives wrapped
+	if dwc := msg.GetDocumentWithCaptionMessage(); dwc != nil {
+		return extractMediaInfo(dwc.GetMessage())
 	}
 
 	return "", "", "", nil, nil, nil, 0
@@ -1489,14 +1503,7 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 				}
 
 				// Extract text content
-				var content string
-				if msg.Message.Message != nil {
-					if conv := msg.Message.Message.GetConversation(); conv != "" {
-						content = conv
-					} else if ext := msg.Message.Message.GetExtendedTextMessage(); ext != nil {
-						content = ext.GetText()
-					}
-				}
+				content := extractTextContent(msg.Message.Message)
 
 				// Extract media info
 				var mediaType, filename, url string
