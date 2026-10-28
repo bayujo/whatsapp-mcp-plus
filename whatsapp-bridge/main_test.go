@@ -19,6 +19,19 @@ func TestExtractTextContentCaptions(t *testing.T) {
 			t.Errorf("extractTextContent(%s) = %q", want, got)
 		}
 	}
+	fwd := &waProto.ContextInfo{IsForwarded: proto.Bool(true)}
+	for name, msg := range map[string]*waProto.Message{
+		"text":    {ExtendedTextMessage: &waProto.ExtendedTextMessage{Text: proto.String("t"), ContextInfo: fwd}},
+		"image":   {ImageMessage: &waProto.ImageMessage{ContextInfo: fwd}},
+		"wrapped": {DocumentWithCaptionMessage: &waProto.FutureProofMessage{Message: &waProto.Message{DocumentMessage: &waProto.DocumentMessage{ContextInfo: fwd}}}},
+	} {
+		if !isForwarded(msg) {
+			t.Errorf("isForwarded(%s) = false", name)
+		}
+	}
+	if isForwarded(cases["text"]) || isForwarded(cases["image"]) {
+		t.Error("isForwarded on a message without the label = true")
+	}
 	wrapped := cases["wrapped"]
 	if mediaType, filename, _, _, _, _, _ := extractMediaInfo(wrapped); mediaType != "document" || filename != "a.pdf" {
 		t.Errorf("extractMediaInfo(wrapped) = %q, %q", mediaType, filename)

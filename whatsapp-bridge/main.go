@@ -82,6 +82,7 @@ func NewMessageStore() (*MessageStore, error) {
 			file_sha256 BLOB,
 			file_enc_sha256 BLOB,
 			file_length INTEGER,
+			forwarded BOOLEAN,
 			PRIMARY KEY (id, chat_jid),
 			FOREIGN KEY (chat_jid) REFERENCES chats(jid)
 		);
@@ -89,6 +90,11 @@ func NewMessageStore() (*MessageStore, error) {
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to create tables: %v", err)
+	}
+	// Stores made before the column existed; rows from then stay NULL (unknown)
+	if _, err = db.Exec("ALTER TABLE messages ADD COLUMN forwarded BOOLEAN"); err != nil && !strings.Contains(err.Error(), "duplicate column") {
+		db.Close()
+		return nil, fmt.Errorf("failed to add forwarded column: %v", err)
 	}
 
 	return &MessageStore{db: db}, nil
@@ -110,17 +116,17 @@ func (store *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time
 
 // Store a message in the database
 func (store *MessageStore) StoreMessage(id, chatJID, sender, content string, timestamp time.Time, isFromMe bool,
-	mediaType, filename, url string, mediaKey, fileSHA256, fileEncSHA256 []byte, fileLength uint64) error {
+	mediaType, filename, url string, mediaKey, fileSHA256, fileEncSHA256 []byte, fileLength uint64, forwarded bool) error {
 	// Only store if there's actual content or media
 	if content == "" && mediaType == "" {
 		return nil
 	}
 
 	_, err := store.db.Exec(
-		`INSERT OR REPLACE INTO messages 
-		(id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename, url, media_key, file_sha256, file_enc_sha256, file_length) 
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, chatJID, sender, content, timestamp, isFromMe, mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength,
+		`INSERT OR REPLACE INTO messages
+		(id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename, url, media_key, file_sha256, file_enc_sha256, file_length, forwarded)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, chatJID, sender, content, timestamp, isFromMe, mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength, forwarded,
 	)
 	return err
 }
@@ -197,6 +203,23 @@ func extractTextContent(msg *waProto.Message) string {
 		return extractTextContent(dwc.GetMessage())
 	}
 	return ""
+}
+
+// isForwarded reports WhatsApp's "Forwarded" label, for the message types the store keeps
+func isForwarded(msg *waProto.Message) bool {
+	if dwc := msg.GetDocumentWithCaptionMessage(); dwc != nil {
+		return isForwarded(dwc.GetMessage())
+	}
+	for _, ci := range []*waProto.ContextInfo{
+		msg.GetExtendedTextMessage().GetContextInfo(), msg.GetImageMessage().GetContextInfo(),
+		msg.GetVideoMessage().GetContextInfo(), msg.GetAudioMessage().GetContextInfo(),
+		msg.GetDocumentMessage().GetContextInfo(),
+	} {
+		if ci.GetIsForwarded() {
+			return true
+		}
+	}
+	return false
 }
 
 // SendMessageResponse represents the response for the send message API
@@ -567,6 +590,7 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 		fileSHA256,
 		fileEncSHA256,
 		fileLength,
+		isForwarded(msg.Message),
 	)
 
 	if err != nil {
@@ -829,7 +853,7 @@ func persistOutgoingMessage(client *whatsmeow.Client, store *MessageStore, chatJ
 		sender = client.Store.ID.User
 	}
 	store.TouchChat(chatJID.String(), chatJID.User, ts)
-	if err := store.StoreMessage(resp.ID, chatJID.String(), sender, content, ts, true, mediaType, filename, "", nil, nil, nil, 0); err != nil {
+	if err := store.StoreMessage(resp.ID, chatJID.String(), sender, content, ts, true, mediaType, filename, "", nil, nil, nil, 0, false); err != nil {
 		fmt.Printf("Failed to persist outgoing message: %v\n", err)
 	}
 }
@@ -1250,6 +1274,14 @@ func main() {
 
 	// Signalled once WhatsApp has delivered the messages queued while offline
 	offlineSynced := make(chan struct{}, 1)
+	// Signalled per stored message or history batch, so the wait below can tell a long backlog from a stall
+	arrived := make(chan struct{}, 1)
+	notify := func(ch chan struct{}) {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
 
 	// Setup event handling for messages and history sync
 	client.AddEventHandler(func(evt interface{}) {
@@ -1257,19 +1289,19 @@ func main() {
 		case *events.Message:
 			// Process regular messages
 			handleMessage(client, messageStore, v, logger)
+			notify(arrived)
 
 		case *events.HistorySync:
 			// Process history sync events
 			handleHistorySync(client, messageStore, v, logger)
+			notify(arrived)
 
 		case *events.Connected:
 			logger.Infof("Connected to WhatsApp")
 
 		case *events.OfflineSyncCompleted:
-			select {
-			case offlineSynced <- struct{}{}:
-			default:
-			}
+			logger.Infof("Offline sync completed (%d events)", v.Count)
+			notify(offlineSynced)
 
 		case *events.LoggedOut:
 			logger.Warnf("Device logged out, please scan QR code to log in again")
@@ -1331,11 +1363,21 @@ func main() {
 	}
 
 	// Serve the API only once queued messages are stored, so a read right
-	// after an on-demand start sees current data.
-	select {
-	case <-offlineSynced:
-	case <-time.After(15 * time.Second):
-		logger.Warnf("Offline sync not reported within 15s, serving anyway")
+	// after an on-demand start sees current data. A night's backlog outlasts any
+	// fixed wait (12 h took ~20 s), so give up only after 15s with nothing arriving.
+	limit := time.After(3 * time.Minute) // in case the completion never comes while chats stay busy
+	for waiting := true; waiting; {
+		select {
+		case <-offlineSynced:
+			waiting = false
+		case <-arrived:
+		case <-time.After(15 * time.Second):
+			logger.Warnf("Offline sync not reported and nothing arrived for 15s, serving anyway")
+			waiting = false
+		case <-limit:
+			logger.Warnf("Offline sync not reported within 3 min, serving anyway")
+			waiting = false
+		}
 	}
 
 	// A revoked session (401) deletes the stored device; the next start shows a QR
@@ -1564,6 +1606,7 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					fileSHA256,
 					fileEncSHA256,
 					fileLength,
+					isForwarded(msg.Message.Message),
 				)
 				if err != nil {
 					logger.Warnf("Failed to store history message: %v", err)

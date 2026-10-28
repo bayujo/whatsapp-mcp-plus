@@ -23,7 +23,7 @@ def _bridge_listening() -> bool:
         return False
 
 
-def ensure_bridge(timeout: float = 45) -> None:
+def ensure_bridge(timeout: float = 200) -> None:  # above the bridge's 3 min cap on the offline-sync wait
     """Start the Go bridge if it isn't running, and wait until it serves the API.
 
     The bridge opens the API only after it is logged in and WhatsApp has
