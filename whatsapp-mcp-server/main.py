@@ -205,7 +205,7 @@ def send_message(
     }
 
 @tool
-def send_file(recipient: str, media_path: str, caption: str = "") -> Dict[str, Any]:
+def send_file(recipient: str, media_path: str, caption: str = "", as_document: bool = False) -> Dict[str, Any]:
     """Send a file such as a picture, raw audio, video or document via WhatsApp to the specified recipient. For group messages use the JID.
 
     Args:
@@ -213,13 +213,14 @@ def send_file(recipient: str, media_path: str, caption: str = "") -> Dict[str, A
                  or a JID (e.g., "123456789@s.whatsapp.net" or a group JID like "123456789@g.us")
         media_path: The absolute path to the media file to send (image, video, document)
         caption: Optional text caption to send together with the file (shown under images/videos/documents)
+        as_document: Send an image or video as a file, so WhatsApp does not compress it
 
     Returns:
         A dictionary containing success status and a status message
     """
 
     # Call the whatsapp_send_file function
-    success, status_message = whatsapp_send_file(recipient, media_path, caption)
+    success, status_message = whatsapp_send_file(recipient, media_path, caption, as_document)
     return {
         "success": success,
         "message": status_message

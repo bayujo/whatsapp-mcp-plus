@@ -234,6 +234,7 @@ type SendMessageRequest struct {
 	Recipient       string `json:"recipient"`
 	Message         string `json:"message"`
 	MediaPath       string `json:"media_path,omitempty"`
+	AsDocument      bool   `json:"as_document,omitempty"`
 	QuotedMessageID string `json:"quoted_message_id,omitempty"`
 }
 
@@ -284,7 +285,7 @@ type GroupActionRequest struct {
 }
 
 // Function to send a WhatsApp message
-func sendWhatsAppMessage(client *whatsmeow.Client, messageStore *MessageStore, recipient string, message string, mediaPath string, quotedID string) (bool, string, string) {
+func sendWhatsAppMessage(client *whatsmeow.Client, messageStore *MessageStore, recipient string, message string, mediaPath string, quotedID string, asDocument bool) (bool, string, string) {
 	if !client.IsConnected() {
 		return false, "Not connected to WhatsApp", ""
 	}
@@ -394,6 +395,11 @@ func sendWhatsAppMessage(client *whatsmeow.Client, messageStore *MessageStore, r
 		default:
 			mediaType = whatsmeow.MediaDocument
 			mimeType = "application/octet-stream"
+		}
+
+		// As a document the file arrives byte for byte: WhatsApp re-encodes a VideoMessage or ImageMessage.
+		if asDocument {
+			mediaType = whatsmeow.MediaDocument
 		}
 
 		// Upload media to WhatsApp servers
@@ -1070,7 +1076,7 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		fmt.Println("Received request to send message", req.Message, req.MediaPath)
 
 		// Send the message
-		success, message, _ := sendWhatsAppMessage(client, messageStore, req.Recipient, req.Message, req.MediaPath, req.QuotedMessageID)
+		success, message, _ := sendWhatsAppMessage(client, messageStore, req.Recipient, req.Message, req.MediaPath, req.QuotedMessageID, req.AsDocument)
 		fmt.Println("Message sent", success, message)
 		// Set response headers
 		w.Header().Set("Content-Type", "application/json")

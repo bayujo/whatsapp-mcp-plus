@@ -701,7 +701,7 @@ def send_message(recipient: str, message: str, quoted_message_id: str = "") -> T
     except Exception as e:
         return False, f"Unexpected error: {str(e)}"
 
-def send_file(recipient: str, media_path: str, caption: str = "") -> Tuple[bool, str]:
+def send_file(recipient: str, media_path: str, caption: str = "", as_document: bool = False) -> Tuple[bool, str]:
     try:
         # Validate input
         if not recipient:
@@ -720,6 +720,8 @@ def send_file(recipient: str, media_path: str, caption: str = "") -> Tuple[bool,
         }
         if caption:
             payload["message"] = caption
+        if as_document:
+            payload["as_document"] = True
 
         response = requests.post(url, json=payload)
         
