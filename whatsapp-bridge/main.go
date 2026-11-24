@@ -564,6 +564,14 @@ func extractMediaInfo(msg *waProto.Message) (mediaType string, filename string, 
 
 // Handle regular incoming messages with media support
 func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *events.Message, logger waLog.Logger) {
+	// An edit or a delete for everyone (from a contact or from our own phone) changes a stored row; it is no new message
+	if pm := msg.Message.GetProtocolMessage(); pm != nil {
+		if err := applyProtocolMessage(messageStore, msg.Info.Chat.String(), pm); err != nil {
+			logger.Warnf("Failed to apply %s to %s: %v", pm.GetType(), pm.GetKey().GetID(), err)
+		}
+		return
+	}
+
 	// Save message to database
 	chatJID := msg.Info.Chat.String()
 	sender := msg.Info.Sender.User
@@ -947,7 +955,7 @@ func editMessage(client *whatsmeow.Client, store *MessageStore, chatJIDStr, mess
 	if _, err := client.SendMessage(context.Background(), chatJID, edit); err != nil {
 		return false, fmt.Sprintf("Error editing message: %v", err)
 	}
-	store.db.Exec("UPDATE messages SET content = ? WHERE id = ? AND chat_jid = ?", newText, messageID, chatJID.String())
+	applyProtocolMessage(store, chatJID.String(), edit.GetEditedMessage().GetMessage().GetProtocolMessage())
 	return true, "Message edited"
 }
 
@@ -961,8 +969,23 @@ func deleteMessage(client *whatsmeow.Client, store *MessageStore, chatJIDStr, me
 	if _, err := client.SendMessage(context.Background(), chatJID, revoke); err != nil {
 		return false, fmt.Sprintf("Error deleting message: %v", err)
 	}
-	store.db.Exec("DELETE FROM messages WHERE id = ? AND chat_jid = ?", messageID, chatJID.String())
+	applyProtocolMessage(store, chatJID.String(), revoke.GetProtocolMessage())
 	return true, "Message deleted"
+}
+
+// applyProtocolMessage puts an edit or a delete for everyone into the stored message it targets.
+func applyProtocolMessage(store *MessageStore, chatJID string, pm *waProto.ProtocolMessage) error {
+	id := pm.GetKey().GetID()
+	var err error
+	switch pm.GetType() {
+	case waProto.ProtocolMessage_MESSAGE_EDIT:
+		if text := extractTextContent(pm.GetEditedMessage()); text != "" {
+			_, err = store.db.Exec("UPDATE messages SET content = ? WHERE id = ? AND chat_jid = ?", text, id, chatJID)
+		}
+	case waProto.ProtocolMessage_REVOKE:
+		_, err = store.db.Exec("DELETE FROM messages WHERE id = ? AND chat_jid = ?", id, chatJID)
+	}
+	return err
 }
 
 func createGroup(client *whatsmeow.Client, name string, participants []string) (bool, string, string) {
